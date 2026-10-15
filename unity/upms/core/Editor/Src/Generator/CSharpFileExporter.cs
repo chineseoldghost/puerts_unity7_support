@@ -1,4 +1,4 @@
-/*
+﻿/*
 * Tencent is pleased to support the open source community by making Puerts available.
 * Copyright (C) 2020 Tencent.  All rights reserved.
 * Puerts is licensed under the BSD 3-Clause License, except for the third-party components listed in the file
@@ -491,8 +491,11 @@ return new List<Instruction>();
             string dataTransTemplate = Resources.Load<TextAsset>("puerts/xil2cpp/TDataTrans.h").text;
             string dataTransContent = ProcessTemplateSubstitutions(dataTransTemplate);
             WriteFile(outDir + "TDataTrans.h", dataTransContent);
-
+#if UNITY_7000_0_OR_NEWER
+            string puertsIl2cppTemplate = Resources.Load<TextAsset>("puerts/xil2cpp/Unity7/Puerts_il2cpp.cpp").text;
+#else
             string puertsIl2cppTemplate = Resources.Load<TextAsset>("puerts/xil2cpp/Puerts_il2cpp.cpp").text;
+#endif
             string puertsIl2cppContent = ProcessTemplateSubstitutions(puertsIl2cppTemplate);
             WriteFile(outDir + "Puerts_il2cpp.cpp", puertsIl2cppContent);
         }
@@ -568,47 +571,73 @@ return new List<Instruction>();
 
         private static void IterateAllValueType(Type type, List<CSharpCodeGen.ValueTypeInfo> list)
         {
-            if (Utils.isDisallowedType(type)) return;
-            if (type.IsPrimitive) return;
-
-            Type baseType = type.BaseType;
-            while (baseType != null && baseType != typeof(System.Object))
+            try
             {
-                IterateAllValueType(baseType, list);
-                baseType = baseType.BaseType;
-            }
-
-            foreach (var field in type.GetFields(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-            {
-                if (field.FieldType.IsValueType && !field.FieldType.IsPrimitive)
+                // 1. 强行过滤掉包含 ILCompiler, ILBuilder, AssemblyState 的类
+                if (type.Name.Contains("ILCompiler") ||
+                    type.Name.Contains("ILBuilder") ||
+                    type.Name.Contains("ILCompiler") ||
+                    type.Name.Contains("ILFunction") ||
+                    type.Name.Contains("AssemblyState") ||
+                    type.Name.Contains("PortablePdbInstance"))
                 {
-                    IterateAllValueType(field.FieldType, list);
+                    return; // 返回 true 表示过滤掉，不进行导出
                 }
-            }
 
-            if (!type.IsValueType) return;
-
-            int value = -1;
-            if (Nullable.GetUnderlyingType(type) != null)
-            {
-                var fields = type.GetFields(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                for (var i = 0; i < fields.Length; i++)
+                // 2. 建议直接过滤掉所有系统底层的内部编译命名空间（针对 Unity 7 优化）
+                if (type.Name.StartsWith("System.Reflection.Emit") ||
+                    type.Name.StartsWith("Internal.IL") ||
+                    type.Name.StartsWith("Microsoft.CodeAnalysis"))
                 {
-                    if (fields[i].Name == "hasValue" || fields[i].Name == "has_value")
+                    return;
+                }
+
+                if (Utils.isDisallowedType(type)) return;
+                if (type.IsPrimitive) return;
+
+                Type baseType = type.BaseType;
+                while (baseType != null && baseType != typeof(System.Object))
+                {
+                    IterateAllValueType(baseType, list);
+                    baseType = baseType.BaseType;
+                }
+
+                foreach (var field in type.GetFields(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (field.FieldType.IsValueType && !field.FieldType.IsPrimitive)
                     {
-                        value = i;
-                        break;
+                        IterateAllValueType(field.FieldType, list);
                     }
                 }
-            }
 
-            list.Add(new CSharpCodeGen.ValueTypeInfo
+                if (!type.IsValueType) return;
+
+                int value = -1;
+                if (Nullable.GetUnderlyingType(type) != null)
+                {
+                    var fields = type.GetFields(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    for (var i = 0; i < fields.Length; i++)
+                    {
+                        if (fields[i].Name == "hasValue" || fields[i].Name == "has_value")
+                        {
+                            value = i;
+                            break;
+                        }
+                    }
+                }
+
+                list.Add(new CSharpCodeGen.ValueTypeInfo
+                {
+                    Signature = Puerts.TypeUtils.GetTypeSignature(type),
+                    CsName = type.Name,
+                    FieldSignatures = GetValueTypeFieldSignatures(type),
+                    NullableHasValuePosition = value
+                });
+            }
+            catch (Exception e)
             {
-                Signature = Puerts.TypeUtils.GetTypeSignature(type),
-                CsName = type.Name,
-                FieldSignatures = GetValueTypeFieldSignatures(type),
-                NullableHasValuePosition = value
-            });
+                UnityEngine.Debug.LogWarning(string.Format("IterateAllValueType Error:{0}", type.Name));
+            }
         }
 
         private static bool IsSelfRefGenericType(Type type, Type typeDef)

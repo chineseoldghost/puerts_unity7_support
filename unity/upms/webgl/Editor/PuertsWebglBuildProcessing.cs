@@ -115,8 +115,8 @@ public class PuertsWebglBuildProcessing : IPreprocessBuildWithReport, IPostproce
 
         List<string> resourcesPattens = new List<string>
         {
-            Application.dataPath + "/**/Resources/**/*.mjs",
-            Application.dataPath + "/**/Resources/**/*.cjs",
+            Application.dataPath + "/../**/Resources/**/*.mjs",
+            Application.dataPath + "/../**/Resources/**/*.cjs",
             Path.GetFullPath("Packages/com.tencent.puerts.core/") + "/**/Resources/**/*.mjs"
         };
 
@@ -201,11 +201,16 @@ public class PuertsWebglBuildProcessing : IPreprocessBuildWithReport, IPostproce
             if (!indexContent.Contains("puerts-runtime.js") || !indexContent.Contains("puerts_browser_js_resources.js"))
             {
                 UnityEngine.Debug.Log("[PuerTs] >>>> inject to " + indexPath);
+#if UNITY_7000_0_OR_NEWER
+                int pos = indexContent.IndexOf("<script>");
+                indexContent = indexContent.Substring(0, pos) + "  <script src=\"./puerts-runtime.js\"></script>\n    <script src=\"./puerts_browser_js_resources.js\"></script>" + indexContent.Substring(pos);
+#else
                 int pos = indexContent.IndexOf("</head>");
                 indexContent = indexContent.Substring(0, pos) + "  <script src=\"./puerts-runtime.js\"></script>\n    <script src=\"./puerts_browser_js_resources.js\"></script>" + indexContent.Substring(pos);
+#endif
                 File.WriteAllText(indexPath, indexContent);
             }
         }
     }
 #endif
-    }
+            }

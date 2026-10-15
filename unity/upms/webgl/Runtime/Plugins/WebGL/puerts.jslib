@@ -1,12 +1,26 @@
 var exportDLL = {
+    // Force Emscripten to link these library/runtime functions into the final
+    // framework.js. Since Emscripten >= 3.1 they live in system libraries
+    // (libstrings.js/libcore.js/libaddfunction.js) and are only emitted when
+    // something depends on them - e.g. $UTF16ToString is otherwise only pulled
+    // in by embind, so it is missing from Unity 7000 (Emscripten 4.x) builds.
+    InitPuertsWebGL__deps: [
+        '$UTF8ToString', '$UTF16ToString',
+        '$stringToUTF8', '$lengthBytesUTF8', '$stringToUTF16', '$lengthBytesUTF16',
+        '$stackAlloc', '$stackSave', '$stackRestore',
+        '$addFunction', '$removeFunction', '$getWasmTableEntry',
+        'malloc', 'free',
+        'setTempRet0',
+    ],
     InitPuertsWebGL: function () {
         var global = typeof global != 'undefined' ? global : window;
         if (!global.PuertsWebGL) {
             throw new Error('cannot found PuertsWebGL script. please find some way to load puerts-runtime.js');
         }
-        let oldUpdateGlobalBufferAndViews = updateGlobalBufferAndViews;
-        updateGlobalBufferAndViews = function (buf) {
-            oldUpdateGlobalBufferAndViews(buf);
+        // refresh the heap views cached by PuerTS after the wasm heap grows.
+        // Emscripten >= 3.1 renamed updateGlobarBufferAndViews (typo) to updateMemoryViews;
+        // Unity 7000 (Emscripten 4.x) only ships updateMemoryViews.
+        var syncHeapViewsToPuerts = function () {
             global.PuertsWebGL.updateGlobalBufferAndViews(
                 HEAP8,
                 HEAPU8,
@@ -14,26 +28,67 @@ var exportDLL = {
                 HEAPF32,
                 HEAPF64
             );
+        };
+        if (typeof updateMemoryViews == 'function') {
+            var oldUpdateMemoryViews = updateMemoryViews;
+            updateMemoryViews = function () {
+                oldUpdateMemoryViews();
+                syncHeapViewsToPuerts();
+            };
+        } else if (typeof updateGlobarBufferAndViews == 'function') {
+            // legacy Emscripten 2.x/3.1 (Unity 2021/2022)
+            var oldUpdateGlobarBufferAndViews = updateGlobarBufferAndViews;
+            updateGlobarBufferAndViews = function (buf) {
+                oldUpdateGlobarBufferAndViews(buf);
+                syncHeapViewsToPuerts();
+            };
+        } else if (typeof updateGlobalBufferAndViews == 'function') {
+            // engine forks that fixed the typo in place (e.g. Tuanjie)
+            var oldUpdateGlobalBufferAndViews = updateGlobalBufferAndViews;
+            updateGlobalBufferAndViews = function (buf) {
+                oldUpdateGlobalBufferAndViews(buf);
+                syncHeapViewsToPuerts();
+            };
+        } else {
+            // last resort: watch the underlying WebAssembly.Memory for growth
+            // (covers GROWABLE_ARRAYBUFFERS builds where updateMemoryViews is
+            // not called on grow, if the memory object exposes a 'grow' event)
+            var memory = (typeof wasmMemory != 'undefined') ? wasmMemory
+                : (Module && Module.wasmMemory) ? Module.wasmMemory : null;
+            if (memory && typeof memory.addEventListener == 'function') {
+                memory.addEventListener('grow', syncHeapViewsToPuerts);
+            }
         }
 
+        // defensive: typeof-guards so a missing symbol degrades with a clear
+        // warning instead of a ReferenceError that kills the whole PuerTS init
+        // (__deps above should keep them all present). typeof + direct reference
+        // keeps closure-compiler renaming consistent - never use eval/strings here.
+        var warnMissingRuntimeFn = function (name) {
+            if (typeof console != 'undefined' && console.warn) {
+                console.warn('[PuerTS] Emscripten runtime function "' + name + '" is missing in this build; the related feature will fail when used.');
+            }
+            return undefined;
+        };
+
         global.PuertsWebGL.Init({
-            UTF8ToString,
-            UTF16ToString,
-            _malloc,
-            _free,
-            _setTempRet0,
-            stringToUTF8,
-            lengthBytesUTF8,
-            stringToUTF16,
-            lengthBytesUTF16,
-            stackAlloc,
-            stackSave,
-            stackRestore,
+            UTF8ToString: (typeof UTF8ToString != 'undefined') ? UTF8ToString : warnMissingRuntimeFn('UTF8ToString'),
+            UTF16ToString: (typeof UTF16ToString != 'undefined') ? UTF16ToString : warnMissingRuntimeFn('UTF16ToString'),
+            _malloc: (typeof _malloc != 'undefined') ? _malloc : warnMissingRuntimeFn('_malloc'),
+            _free: (typeof _free != 'undefined') ? _free : warnMissingRuntimeFn('_free'),
+            _setTempRet0: (typeof _setTempRet0 != 'undefined') ? _setTempRet0 : warnMissingRuntimeFn('_setTempRet0'),
+            stringToUTF8: (typeof stringToUTF8 != 'undefined') ? stringToUTF8 : warnMissingRuntimeFn('stringToUTF8'),
+            lengthBytesUTF8: (typeof lengthBytesUTF8 != 'undefined') ? lengthBytesUTF8 : warnMissingRuntimeFn('lengthBytesUTF8'),
+            stringToUTF16: (typeof stringToUTF16 != 'undefined') ? stringToUTF16 : warnMissingRuntimeFn('stringToUTF16'),
+            lengthBytesUTF16: (typeof lengthBytesUTF16 != 'undefined') ? lengthBytesUTF16 : warnMissingRuntimeFn('lengthBytesUTF16'),
+            stackAlloc: (typeof stackAlloc != 'undefined') ? stackAlloc : warnMissingRuntimeFn('stackAlloc'),
+            stackSave: (typeof stackSave != 'undefined') ? stackSave : warnMissingRuntimeFn('stackSave'),
+            stackRestore: (typeof stackRestore != 'undefined') ? stackRestore : warnMissingRuntimeFn('stackRestore'),
             getWasmTableEntry: (typeof getWasmTableEntry != 'undefined') ? getWasmTableEntry : function(funcPtr) {
                 return wasmTable.get(funcPtr);
             },
-            addFunction,
-            removeFunction,
+            addFunction: (typeof addFunction != 'undefined') ? addFunction : warnMissingRuntimeFn('addFunction'),
+            removeFunction: (typeof removeFunction != 'undefined') ? removeFunction : warnMissingRuntimeFn('removeFunction'),
             _CallCSharpFunctionCallback: Module._CallCSharpFunctionCallback,
             _CallCSharpConstructorCallback: Module._CallCSharpConstructorCallback,
             _CallCSharpDestructorCallback: Module._CallCSharpDestructorCallback,
