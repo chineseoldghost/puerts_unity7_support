@@ -653,6 +653,10 @@ namespace Puerts.UnitTest
             set { _arrayBufferTestProp = value; }
         }
         public static Puerts.ArrayBuffer arrayBufferTestFieldStatic = null;
+        public static void ArrayBufferTestOutValue(out Puerts.ArrayBuffer value)
+        {
+            value = null;
+        }
         protected static Puerts.ArrayBuffer _arrayBufferTestPropStatic = null;
         public static Puerts.ArrayBuffer arrayBufferTestPropStatic
         {
@@ -3187,5 +3191,40 @@ __PDUOTF;");
             Assert.AreNotEqual(0, jsEnv.Eval<int>("global.__weak_ref_arr.filter(e => e.deref() === undefined).length"));
         }
 
+        [Test]
+        public void ValueTypePrototypeEquals()
+        {
+            var jsEnv = UnitTestEnv.GetEnv();
+            var result = jsEnv.Eval<bool>(@"
+                (function() {
+                    const TestStruct = CS.Puerts.UnitTest.TestStruct;
+                    const valueTypeEquals = CS.System.ValueType.prototype.Equals;
+                    const s = new TestStruct(123);
+                    return valueTypeEquals.call(s, s);
+                })()
+            ");
+
+            Assert.True(result);
+        }
+
+        [Test]
+        public void ArrayBufferInstanceTestNull()
+        {
+            var jsEnv = UnitTestEnv.GetEnv();
+            jsEnv.Eval(@"
+                (function() {
+                    const TestHelper = CS.Puerts.UnitTest.TestHelper;
+                    const assertAndPrint = TestHelper.AssertAndPrint.bind(TestHelper);
+
+                    TestHelper.arrayBufferTestFieldStatic = null;
+                    assertAndPrint('null ArrayBuffer', TestHelper.arrayBufferTestFieldStatic, null);
+
+                    var o = puerts.$ref();
+                    TestHelper.ArrayBufferTestOutValue(o);
+                    assertAndPrint('null ArrayBuffer out value', puerts.$unref(o), null);
+                })();
+            ");
+            jsEnv.Tick();
+        }
     }
 }
